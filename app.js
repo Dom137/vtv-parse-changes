@@ -210,7 +210,7 @@ async function fetchTopologyOpcoData() {
 
 // function to fetch the topology elements by name
 async function fetchTopologyDataByName(name) {
-    const url = `${AIOPS_TOPO_EP}?_field=uniqueId&_field=name&_field=opco&_filter=name%3D${name}&_include_global_resources=false&_include_count=false&_include_status=false&_include_status_severity=false&_include_metadata=false&_return_composites=false`;
+    const url = `${AIOPS_TOPO_EP}?_field=uniqueId&_field=matchTokens&_field=entityTypes&_field=name&_field=opco&_filter=name%3D${name}&_include_global_resources=false&_include_count=false&_include_status=false&_include_status_severity=false&_include_metadata=false&_return_composites=false`;
 
     try {
         const response = await axios.get(url, {
@@ -373,6 +373,20 @@ async function prepareAndSendChangeData(changeData, opcoTopoData) {
                                         if (eleOpco && eleUniqueId) {
                                             if (affectedOpcos.includes(eleOpco)) {
                                                 console.log(`Found affected service ${affectedService} related to change ${change.name}, and it is linked to Opco ${eleOpco}.`);
+                                                // set the change status on the element
+                                                let eleUpdate = {};
+                                                eleUpdate.uniqueId = eleUniqueId;
+                                                eleUpdate.change = change[CHG_DATA_STATUS_ATTR];
+                                                eleUpdate.entityTypes= topoElement.entityTypes;
+                                                eleUpdate.matchTokens = topoElement.matchTokens;
+
+                                                if (await sendToTopoApiOrFile(AIOPS_TOPO_EP + '/' + topoElement._id, eleUpdate)) {
+                                                    console.log(`Successfully updated change status for affected service ${affectedService} for change ${changeTitle}`);
+                                                }
+                                                else {
+                                                    console.error(`Error updating change status for affected service ${affectedService} for change ${changeTitle}`);
+                                                }
+
                                                 // create the relation
                                                 const chgToEleRelation = {
                                                     _fromUniqueId: eleUniqueId,
@@ -386,16 +400,6 @@ async function prepareAndSendChangeData(changeData, opcoTopoData) {
                                                     console.error(`Error creating relation from affected service ${affectedService} to change ${change.name}:`);
                                                 }
 
-                                                // set the change status on the element
-                                                let eleUpdate = {};
-                                                eleUpdate.uniqueId = eleUniqueId;
-                                                eleUpdate.change = change[CHG_DATA_STATUS_ATTR];
-                                                if (await sendToTopoApiOrFile(AIOPS_TOPO_EP + '/' + topoElement._id, eleUpdate)) {
-                                                    console.log(`Successfully updated change status for affected service ${affectedService} for change ${changeTitle}`);
-                                                }
-                                                else {
-                                                    console.error(`Error updating change status for affected service ${affectedService} for change ${changeTitle}`);
-                                                }
 
                                             }
                                         }
