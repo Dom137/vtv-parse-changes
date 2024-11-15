@@ -1,7 +1,10 @@
 const AWS = require('aws-sdk');
 const axios = require('axios');
+const fs = require('fs');
 
-const s3 = new AWS.S3();
+let s3 = null;
+
+const FILE_NAME = 'changes.data';
 
 const BUCKET_NAME = process.env.AWS_BUCKET_NAME;
 const SEPERATOR = process.env.APP_SEPERATOR;
@@ -35,9 +38,11 @@ const AIOPS_TOPO_EP = process.env.AIOPS_TOPO_EP;
 const AIOPS_RESOURCES_EP = process.env.AIOPS_RESOURCES_EP;
 const AIOPS_REFERENCES_EP = process.env.AIOPS_REFERENCES_EP;
 
-let AIOPS_AUTH_TOKEN = '';
-
 // will be set during runtime based on env var
+let USE_PROXY = false;
+let PROXY_URL = '';
+let AIOPS_AUTH_TOKEN = '';
+let CREATE_FILE = false;
 let DEV_MODE = false;
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
@@ -54,35 +59,73 @@ async function getAuthToken() {
             {
                 headers: {
                     'Content-Type': 'application/json',
-                }
+                },
+                proxy: false
             }
         );
+
+        // Extract the token from the response data
         const token = response.data.token;
+
+        // Return the token
         return token;
     } catch (error) {
-        console.error('Error getting AIOps authentication token:', error.response ? error.response.data : error.message);
+        console.error('Error:', error.response ? error.response.data : error.message);
+        return null;
     }
 }
 
-// helper function to post data to AIOps
-async function sendToTopoApi(endpoint, data) {
-    const headers = {
-        'accept': 'application/json',
-        'X-TenantID': 'cfd95b7e-3bc7-4006-a4a8-a73a79c71255',
-        'JobId': AIOPS_OBS_JOBNAME,
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + AIOPS_AUTH_TOKEN
-    };
+// helper function to post data to AIOps or write to file
+async function sendToTopoApiOrFile(endpoint, data) {
+    if (CREATE_FILE === true) {
+        // based on the endpoint we decide it the resulting element
+        // will be a Vertex(V) or Edge (E)
+        let jsonString = JSON.stringify(data);
+        if (endpoint === AIOPS_RESOURCES_EP || endpoint.startsWith(AIOPS_TOPO_EP) ) {
+            jsonString = `V:${jsonString}\n`;
+            try {
+                fs.appendFileSync(FILE_NAME, jsonString);
+                return true;
+            } catch (err) {
+                console.error('Error appending to file:', err);
+                return false;
+            }            
+        }
+        else if (endpoint === AIOPS_REFERENCES_EP) {
+            jsonString = `E:${jsonString}\n`;
+            try {
+                fs.appendFileSync(FILE_NAME, jsonString);
+                return true;
+            } catch (err) {
+                console.error('Error appending to file:', err);
+                return false;
+            }   
+        }
+        else {
+            console.error(`Encountered an unexpexted target endpoint <${endpoint}> to choose between vertex or edge!`);
+            return false;
+        }
 
-    try {
-        const response = await axios.post(endpoint, data, { headers });
-        console.log(`Successfully sent data to topology API!`, response.status);
-        return true;
-    } catch (error) {
-        console.log(error);
-        console.error(`Error sending data to topology API!`, error.response ? error.response.data : error.message);
-        return false;
     }
+    else {
+        const headers = {
+            'accept': 'application/json',
+            'X-TenantID': 'cfd95b7e-3bc7-4006-a4a8-a73a79c71255',
+            'JobId': AIOPS_OBS_JOBNAME,
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + AIOPS_AUTH_TOKEN
+        };
+    
+        try {
+            const response = await axios.post(endpoint, data, { headers, proxy: false });
+            console.log(`Successfully sent data to topology API!`, response.status);
+            return true;
+        } catch (error) {
+            console.log(error);
+            console.error(`Error sending data to topology API!`, error.response ? error.response.data : error.message);
+            return false;
+        }
+    }    
 }
 
 // helper funciton to convert a string to boolean
@@ -141,7 +184,8 @@ async function fetchTopologyOpcoData() {
                 'accept': 'application/json',
                 'X-TenantID': 'cfd95b7e-3bc7-4006-a4a8-a73a79c71255',
                 'Authorization': 'Bearer ' + AIOPS_AUTH_TOKEN
-            }
+            },
+            proxy: false
         });
 
         if (response.data) {
@@ -174,7 +218,8 @@ async function fetchTopologyDataByName(name) {
                 'accept': 'application/json',
                 'X-TenantID': 'cfd95b7e-3bc7-4006-a4a8-a73a79c71255',
                 'Authorization': 'Bearer ' + AIOPS_AUTH_TOKEN
-            }
+            },
+            proxy: false
         });
 
         if (response.data && response.data._items) {
@@ -280,7 +325,7 @@ async function prepareAndSendChangeData(changeData, opcoTopoData) {
                         console.debug('The following object will be sent to AIOps:');
                         console.log(change);
                     }
-                    if (await sendToTopoApi(AIOPS_RESOURCES_EP, change)) {
+                    if (await sendToTopoApiOrFile(AIOPS_RESOURCES_EP, change)) {
                         console.log(`Successfully sent data for change ${changeTitle}`);
                     }
                     else {
@@ -301,7 +346,7 @@ async function prepareAndSendChangeData(changeData, opcoTopoData) {
                                     _toUniqueId: change.uniqueId,
                                     _edgeType: OPCO_TO_CHG_REL_TYPE
                                 }
-                                if (await sendToTopoApi(AIOPS_REFERENCES_EP, chgToOpcoRelation)) {
+                                if (await sendToTopoApiOrFile(AIOPS_REFERENCES_EP, chgToOpcoRelation)) {
                                     console.log(`Successfully created relation from OPCO ${affectedOpco} to change ${change.name}`);
                                 }
                                 else {
@@ -334,7 +379,7 @@ async function prepareAndSendChangeData(changeData, opcoTopoData) {
                                                     _toUniqueId: change.uniqueId,
                                                     _edgeType: OPCO_TO_CHG_REL_TYPE
                                                 }
-                                                if (await sendToTopoApi(AIOPS_REFERENCES_EP, chgToEleRelation)) {
+                                                if (await sendToTopoApiOrFile(AIOPS_REFERENCES_EP, chgToEleRelation)) {
                                                     console.log(`Successfully created relation from affected service ${affectedService} to change ${change.name}`);
                                                 }
                                                 else {
@@ -345,7 +390,7 @@ async function prepareAndSendChangeData(changeData, opcoTopoData) {
                                                 let eleUpdate = {};
                                                 eleUpdate.uniqueId = eleUniqueId;
                                                 eleUpdate.change = change[CHG_DATA_STATUS_ATTR];
-                                                if (await sendToTopoApi(AIOPS_TOPO_EP + '/' + topoElement._id, eleUpdate)) {
+                                                if (await sendToTopoApiOrFile(AIOPS_TOPO_EP + '/' + topoElement._id, eleUpdate)) {
                                                     console.log(`Successfully updated change status for affected service ${affectedService} for change ${changeTitle}`);
                                                 }
                                                 else {
@@ -424,26 +469,70 @@ async function extractAttributes(data) {
 (async function main() {
     DEV_MODE = await envStringToBoolean(process.env.APP_DEV_MODE);
     try {
-        const rootFile = await getRootFile();
+        console.log("Trying to get Bearer token from AIOps Auth endpoint...");
+        AIOPS_AUTH_TOKEN = await getAuthToken();
+        let retryCount = 0
+        while (retryCount < 3 && AIOPS_AUTH_TOKEN == null) {
+            console.warn("Warning: Could not get AIOps Auth token. Retrying...");
+            retryCount++;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            AIOPS_AUTH_TOKEN = await getAuthToken();
+        }
+        if (AIOPS_AUTH_TOKEN == null) {
+            console.error("ERROR getting AIOps Auth token, retry limit reached! Cannot continue.");
+            process.exit(1);
+        }
+        else {
+            console.log("Bearer token from AIOps Auth endpoint received.");
 
-        if (rootFile) {
-            const jsonData = await fetchFileFromS3(rootFile);
+            CREATE_FILE = await envStringToBoolean(process.env.APP_CREATE_FILE);
+            if (CREATE_FILE === true) {
+                console.log('Will be creating an output file instead of sending data to AIOps API...');
+                // remove an old file if it exists
+                if (fs.existsSync(FILE_NAME)) {
+                    try {
+                        fs.unlinkSync(FILE_NAME);
+                        console.log(`Old file ${FILE_NAME} was deleted successfully.`);
+                    } catch (err) {
+                        console.error(`Error deleting file ${FILE_NAME}:`, err.message);
+                    }
+                }
+            }
 
-            if (jsonData) {
-                const extractedData = await extractAttributes(jsonData);
-                AIOPS_AUTH_TOKEN = await getAuthToken();
-                // collect OPCOs from AIOps
-                const opcoTopoData = await fetchTopologyOpcoData();
-                if (!opcoTopoData) {
-                    console.error('No OCPO data found in AIOps! No changes will be send to AIOps!');
+            USE_PROXY = await envStringToBoolean(process.env.APP_USE_PROXY);
+            if (USE_PROXY) {
+                PROXY_URL = process.env.APP_PROXY_URL;
+                const proxyAgent = await new ProxyAgent(PROXY_URL);
+                AWS.config.update({
+                    httpOptions: { agent: proxyAgent }
+                });
+                console.log(`Using proxy url <${PROXY_URL}> to access AWS S3 bucket...`);
+            }
+            else {
+                console.log("NOT using proxy to access AWS S3 bucket.");
+            }
+            s3 = new AWS.S3();
+
+            const rootFile = await getRootFile();
+
+            if (rootFile) {
+                const jsonData = await fetchFileFromS3(rootFile);
+    
+                if (jsonData) {
+                    const extractedData = await extractAttributes(jsonData);
+                    AIOPS_AUTH_TOKEN = await getAuthToken();
+                    // collect OPCOs from AIOps
+                    const opcoTopoData = await fetchTopologyOpcoData();
+                    if (!opcoTopoData) {
+                        console.error('No OCPO data found in AIOps! No changes will be send to AIOps!');
+                    }
+                    else {
+                        await prepareAndSendChangeData(extractedData, opcoTopoData);
+                    }
                 }
-                else {
-                    await prepareAndSendChangeData(extractedData, opcoTopoData);
-                }
-                // Output the extracted data to the console
-                // console.log(JSON.stringify(extractedData, null, 2));
             }
         }
+        
     } catch (err) {
         console.error('Error:', err);
     }
