@@ -1,4 +1,5 @@
 const AWS = require('aws-sdk');
+const ProxyAgent = require('proxy-agent').ProxyAgent;
 const axios = require('axios');
 const fs = require('fs');
 
