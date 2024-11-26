@@ -24,7 +24,7 @@ const CHG_DATA_STATUS_ATTR = process.env.APP_CHG_DATA_STATUS_ATTR;
 //     "Change Title", "Environment", "Category", "Change Status", "Impl. Start (UTC)", "Impl. End (UTC)", "Affected OpCo's", "Affected Services", "Affected Components", "Activity Description", "Change Impact"
 // ];
 const configAttributes = process.env.APP_CHG_PROPS_TO_COPY.split(',');
-const changeTypesOfInterest = process.env.APP_CHG_TYPES_OF_INTEREST;
+const changeTypesOfInterest = process.env.APP_CHG_TYPES_OF_INTEREST.toLowerCase();
 
 // AIOps entity types
 const OPCO_ENT_TYPE = 'opco';
@@ -273,7 +273,7 @@ async function prepareAndSendChangeData(changeData, opcoTopoData) {
             console.log('Processing changes with the following status: ' + changeTypesOfInterestList);
         }
 
-        const changeType = change[CHG_DATA_STATUS_ATTR];
+        const changeType = change[CHG_DATA_STATUS_ATTR].toLowerCase();
         if (changeType && changeTypesOfInterestList.includes(changeType)) {
             let changeTitle = change[CHG_DATA_TITLE_ATTR];
             if (changeTitle) {
@@ -425,7 +425,7 @@ async function prepareAndSendChangeData(changeData, opcoTopoData) {
             }
         }
         else {
-            console.warn("WARNING: Given change's type is not of interest! Skipping it...");
+            console.warn(`WARNING: Given change's type is (${changeType}) not of interest! Skipping it...`);
         }
     }
 }
